@@ -14,8 +14,8 @@ def _load_data(path: Path) -> pd.DataFrame:
     except Exception:
         df = pd.read_csv(path, header=None, sep=None, engine="python")
 
-    if df.shape[1] < 3:
-        raise ValueError("Expected at least 3 columns: time(s), C1(V), C2(V).")
+    if df.shape[1] < 4:
+        raise ValueError("Expected at least 4 columns: time(s), C1(V), C2(V), C4(V).")
 
     colmap = {}
     lower_cols = [str(c).strip().lower() for c in df.columns]
@@ -26,6 +26,8 @@ def _load_data(path: Path) -> pd.DataFrame:
             colmap[df.columns[idx]] = "c1_v"
         elif name in {"c2", "ch2", "channel2", "c2_v", "ch2_v"}:
             colmap[df.columns[idx]] = "c2_v"
+        elif name in {"c4", "ch4", "channel4", "c4_v", "ch4_v"}:
+            colmap[df.columns[idx]] = "c4_v"
 
     df = df.rename(columns=colmap)
 
@@ -35,8 +37,10 @@ def _load_data(path: Path) -> pd.DataFrame:
         df = df.rename(columns={df.columns[1]: "c1_v"})
     if "c2_v" not in df.columns:
         df = df.rename(columns={df.columns[2]: "c2_v"})
+    if "c4_v" not in df.columns:
+        df = df.rename(columns={df.columns[3]: "c4_v"})
 
-    return df[["time_s", "c1_v", "c2_v"]]
+    return df[["time_s", "c1_v", "c2_v", "c4_v"]]
 
 
 def _sampling_rate(time_s: np.ndarray) -> float:
@@ -64,7 +68,7 @@ def _save_fig(fig, path: Path):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="FFT of C1 and C2 from a CSV file."
+        description="FFT of C1, C2, and C4 from a CSV file."
     )
     parser.add_argument("file", nargs="?", help="Path to CSV/TSV file.")
     parser.add_argument(
@@ -75,7 +79,7 @@ def main():
     )
     parser.add_argument(
         "--save-eq",
-        help="Save equalizer H(f)=C1/C2 to an .npz file.",
+        help="Save equalizers H1(f)=C1/C2 and H4(f)=C4/C2 to .npz files.",
     )
     parser.add_argument(
         "--apply-eq",
@@ -103,6 +107,7 @@ def main():
     time_s = df["time_s"].to_numpy(dtype=float)
     c1 = df["c1_v"].to_numpy(dtype=float)
     c2 = df["c2_v"].to_numpy(dtype=float)
+    c4 = df["c4_v"].to_numpy(dtype=float)
     base = Path(file_path).with_suffix("")
     plot_dir = Path(r"C:\Waves presentation\waves project\plots")
 
@@ -145,15 +150,18 @@ def main():
 
     f1, X1, mag1 = _fft(c1, fs)
     f2, X2, mag2 = _fft(c2, fs)
+    f4, X4, mag4 = _fft(c4, fs)
 
-    max_f = min(args.max_freq, f1[-1], f2[-1])
+    max_f = min(args.max_freq, f1[-1], f2[-1], f4[-1])
     mask1 = f1 <= max_f
     mask2 = f2 <= max_f
+    mask4 = f4 <= max_f
 
     fig_fft = plt.figure(figsize=(10, 4))
     plt.plot(f1[mask1], mag1[mask1], label="C1 FFT")
     plt.plot(f2[mask2], mag2[mask2], label="C2 FFT", alpha=0.8)
-    plt.title("FFT Magnitude of C1 and C2")
+    plt.plot(f4[mask4], mag4[mask4], label="C4 FFT", alpha=0.8)
+    plt.title("FFT Magnitude of C1, C2, and C4")
     plt.xlabel("Frequency (Hz)")
     plt.ylabel("Magnitude")
     plt.legend()
@@ -161,21 +169,38 @@ def main():
     _save_fig(fig_fft, plot_dir / (base.name + "_fft.png"))
 
     if args.save_eq:
-        # Interpolate C2 FFT onto C1 frequency grid for stable ratio.
-        X2i = np.interp(f1, f2, np.real(X2), left=0.0, right=0.0) + 1j * np.interp(
+        # Interpolate C2 FFT onto C1 and C4 grids for stable ratios.
+        X2i_1 = np.interp(f1, f2, np.real(X2), left=0.0, right=0.0) + 1j * np.interp(
             f1, f2, np.imag(X2), left=0.0, right=0.0
         )
+        X2i_4 = np.interp(f4, f2, np.real(X2), left=0.0, right=0.0) + 1j * np.interp(
+            f4, f2, np.imag(X2), left=0.0, right=0.0
+        )
         eps = 1e-12
-        H = X1 / (X2i + eps)
-        np.savez(args.save_eq, freqs=f1, H=H)
+        H1 = X1 / (X2i_1 + eps)
+        H4 = X4 / (X2i_4 + eps)
 
-        fig_h = plt.figure(figsize=(10, 4))
-        plt.plot(f1[mask1], np.abs(H)[mask1])
-        plt.title("Equalizer |H(f)| = |C1/C2|")
+        save_base = Path(args.save_eq)
+        save_h1 = save_base.with_name(save_base.stem + "_c1.npz")
+        save_h4 = save_base.with_name(save_base.stem + "_c4.npz")
+        np.savez(save_h1, freqs=f1, H=H1)
+        np.savez(save_h4, freqs=f4, H=H4)
+
+        fig_h1 = plt.figure(figsize=(10, 4))
+        plt.plot(f1[mask1], np.abs(H1)[mask1])
+        plt.title("Equalizer |H1(f)| = |C1/C2|")
         plt.xlabel("Frequency (Hz)")
         plt.ylabel("Magnitude")
         plt.tight_layout()
-        _save_fig(fig_h, plot_dir / (base.name + "_eq_mag.png"))
+        _save_fig(fig_h1, plot_dir / (base.name + "_eq_c1_mag.png"))
+
+        fig_h4 = plt.figure(figsize=(10, 4))
+        plt.plot(f4[mask4], np.abs(H4)[mask4])
+        plt.title("Equalizer |H4(f)| = |C4/C2|")
+        plt.xlabel("Frequency (Hz)")
+        plt.ylabel("Magnitude")
+        plt.tight_layout()
+        _save_fig(fig_h4, plot_dir / (base.name + "_eq_c4_mag.png"))
 
     plt.show()
 

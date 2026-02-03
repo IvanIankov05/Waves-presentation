@@ -57,6 +57,11 @@ def _fft(x: np.ndarray, fs: float):
     return freqs, X, mag
 
 
+def _save_fig(fig, path: Path):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(path, dpi=150, bbox_inches="tight")
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="FFT of C1 and C2 from a CSV file."
@@ -98,6 +103,8 @@ def main():
     time_s = df["time_s"].to_numpy(dtype=float)
     c1 = df["c1_v"].to_numpy(dtype=float)
     c2 = df["c2_v"].to_numpy(dtype=float)
+    base = Path(file_path).with_suffix("")
+    plot_dir = Path(r"C:\Waves presentation\waves project\plots")
 
     fs = _sampling_rate(time_s)
 
@@ -114,7 +121,7 @@ def main():
         X_eq = X2 * H
         c_eq = np.fft.irfft(X_eq, n=c2.size)
 
-        plt.figure(figsize=(10, 4))
+        fig_before = plt.figure(figsize=(10, 4))
         plt.plot(time_s, c1, label="C1 original")
         plt.plot(time_s, c2, label="C2 before EQ", alpha=0.7)
         plt.title("ASCII: Before Equalization")
@@ -122,8 +129,9 @@ def main():
         plt.ylabel("Voltage (V)")
         plt.legend()
         plt.tight_layout()
+        _save_fig(fig_before, plot_dir / (base.name + "_before_eq.png"))
 
-        plt.figure(figsize=(10, 4))
+        fig_after = plt.figure(figsize=(10, 4))
         plt.plot(time_s, c1, label="C1 original")
         plt.plot(time_s, c_eq, label="C2 after EQ", alpha=0.7)
         plt.title("ASCII: After Equalization")
@@ -131,6 +139,7 @@ def main():
         plt.ylabel("Voltage (V)")
         plt.legend()
         plt.tight_layout()
+        _save_fig(fig_after, plot_dir / (base.name + "_after_eq.png"))
         plt.show()
         return
 
@@ -141,7 +150,7 @@ def main():
     mask1 = f1 <= max_f
     mask2 = f2 <= max_f
 
-    plt.figure(figsize=(10, 4))
+    fig_fft = plt.figure(figsize=(10, 4))
     plt.plot(f1[mask1], mag1[mask1], label="C1 FFT")
     plt.plot(f2[mask2], mag2[mask2], label="C2 FFT", alpha=0.8)
     plt.title("FFT Magnitude of C1 and C2")
@@ -149,6 +158,7 @@ def main():
     plt.ylabel("Magnitude")
     plt.legend()
     plt.tight_layout()
+    _save_fig(fig_fft, plot_dir / (base.name + "_fft.png"))
 
     if args.save_eq:
         # Interpolate C2 FFT onto C1 frequency grid for stable ratio.
@@ -159,16 +169,16 @@ def main():
         H = X1 / (X2i + eps)
         np.savez(args.save_eq, freqs=f1, H=H)
 
-        plt.figure(figsize=(10, 4))
+        fig_h = plt.figure(figsize=(10, 4))
         plt.plot(f1[mask1], np.abs(H)[mask1])
         plt.title("Equalizer |H(f)| = |C1/C2|")
         plt.xlabel("Frequency (Hz)")
         plt.ylabel("Magnitude")
         plt.tight_layout()
+        _save_fig(fig_h, plot_dir / (base.name + "_eq_mag.png"))
 
     plt.show()
 
 
 if __name__ == "__main__":
     main()
-

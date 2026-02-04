@@ -90,7 +90,7 @@ def main():
     parser.add_argument(
         "--nfft",
         type=int,
-        default=65536,
+        default=262144,
         help="Zero-pad FFT to this length for smoother frequency bins.",
     )
     args = parser.parse_args()
@@ -153,6 +153,17 @@ def main():
         plt.legend()
         plt.tight_layout()
         _save_fig(fig_after, plot_dir / (base.name + "_after_eq.png"))
+
+        # Save equalized ASCII data to CSV
+        out_csv = plot_dir / (base.name + "_after_eq.csv")
+        pd.DataFrame(
+            {
+                "time_s": time_s,
+                "c1_v": c1,
+                "c2_before_eq_v": c2,
+                "c2_after_eq_v": c_eq,
+            }
+        ).to_csv(out_csv, index=False)
         plt.show()
         return
 
@@ -209,7 +220,7 @@ def main():
         omega_c = 2.0 / np.sqrt(L_per * C_per)
 
         omega1 = 2.0 * np.pi * f1
-        beta1 = np.unwrap(np.angle(H1)) / L_sections
+        k_omega = np.unwrap(np.angle(H1)) / L_sections
 
         omega_theory = omega1.copy()
         omega_theory = omega_theory[omega_theory <= omega_c]
@@ -218,11 +229,18 @@ def main():
         )
 
         fig_disp = plt.figure(figsize=(10, 4))
-        plt.plot(f1[mask1], beta1[mask1], label="Measured beta (C1/C2)")
-        plt.plot(omega_theory / (2.0 * np.pi), k_theory, label="Theoretical beta", alpha=0.9)
-        plt.title("Dispersion Relation beta(f) (rad/section)")
-        plt.xlabel("Frequency (Hz)")
-        plt.ylabel("beta (rad/section)")
+        plt.plot(omega1[mask1], k_omega[mask1], label="Measured k(ω)")
+        plt.plot(omega_theory, k_theory, label="Theoretical k(ω)", alpha=0.9)
+        plt.axvline(
+            omega_c,
+            color="red",
+            linestyle=":",
+            linewidth=1.5,
+            label="Cutoff frequency",
+        )
+        plt.title("Dispersion Relation k(ω) (rad/section)")
+        plt.xlabel("Angular Frequency ω (rad/s)")
+        plt.ylabel("k(ω) (rad/section)")
         plt.legend()
         plt.tight_layout()
         _save_fig(fig_disp, plot_dir / (base.name + "_dispersion.png"))

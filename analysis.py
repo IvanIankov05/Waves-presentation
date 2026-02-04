@@ -51,12 +51,14 @@ def _sampling_rate(time_s: np.ndarray) -> float:
     return 1.0 / np.median(dt)
 
 
-def _fft(x: np.ndarray, fs: float):
+def _fft(x: np.ndarray, fs: float, nfft: int | None = None):
     n = x.size
+    if nfft is None or nfft < n:
+        nfft = n
     win = np.hanning(n)
     xw = (x - np.mean(x)) * win
-    X = np.fft.rfft(xw)
-    freqs = np.fft.rfftfreq(n, d=1.0 / fs)
+    X = np.fft.rfft(xw, n=nfft)
+    freqs = np.fft.rfftfreq(nfft, d=1.0 / fs)
     mag = np.abs(X) / (np.sum(win) / 2.0)
     return freqs, X, mag
 
@@ -84,6 +86,12 @@ def main():
     parser.add_argument(
         "--apply-eq",
         help="Apply equalizer .npz to C2 and plot before/after vs C1.",
+    )
+    parser.add_argument(
+        "--nfft",
+        type=int,
+        default=65536,
+        help="Zero-pad FFT to this length for smoother frequency bins.",
     )
     args = parser.parse_args()
 
@@ -119,7 +127,7 @@ def main():
         eq_H = data["H"]
 
         # Apply equalizer to C2
-        f2, X2, _ = _fft(c2, fs)
+        f2, X2, _ = _fft(c2, fs, nfft=args.nfft)
         H = np.interp(f2, eq_freqs, np.real(eq_H), left=0.0, right=0.0) + 1j * np.interp(
             f2, eq_freqs, np.imag(eq_H), left=0.0, right=0.0
         )
@@ -148,20 +156,18 @@ def main():
         plt.show()
         return
 
-    f1, X1, mag1 = _fft(c1, fs)
-    f2, X2, mag2 = _fft(c2, fs)
-    f4, X4, mag4 = _fft(c4, fs)
+    f1, X1, mag1 = _fft(c1, fs, nfft=args.nfft)
+    f2, X2, mag2 = _fft(c2, fs, nfft=args.nfft)
+    f4, X4, mag4 = _fft(c4, fs, nfft=args.nfft)
 
-    max_f = min(args.max_freq, f1[-1], f2[-1], f4[-1])
+    max_f = min(args.max_freq, f1[-1], f2[-1])
     mask1 = f1 <= max_f
     mask2 = f2 <= max_f
-    mask4 = f4 <= max_f
 
     fig_fft = plt.figure(figsize=(10, 4))
     plt.plot(f1[mask1], mag1[mask1], label="C1 FFT")
     plt.plot(f2[mask2], mag2[mask2], label="C2 FFT", alpha=0.8)
-    plt.plot(f4[mask4], mag4[mask4], label="C4 FFT", alpha=0.8)
-    plt.title("FFT Magnitude of C1, C2, and C4")
+    plt.title("FFT Magnitude of C1 and C2")
     plt.xlabel("Frequency (Hz)")
     plt.ylabel("Magnitude")
     plt.legend()
@@ -194,13 +200,32 @@ def main():
         plt.tight_layout()
         _save_fig(fig_h1, plot_dir / (base.name + "_eq_c1_mag.png"))
 
-        fig_h4 = plt.figure(figsize=(10, 4))
-        plt.plot(f4[mask4], np.abs(H4)[mask4])
-        plt.title("Equalizer |H4(f)| = |C4/C2|")
+        # Do not plot C4 equalizer (still saved to .npz).
+
+        # Dispersion: measured (from H1) and theoretical LC ladder.
+        L_sections = 40.0
+        L_per = 330e-6
+        C_per = 15e-9
+        omega_c = 2.0 / np.sqrt(L_per * C_per)
+
+        omega1 = 2.0 * np.pi * f1
+        beta1 = np.unwrap(np.angle(H1)) / L_sections
+
+        omega_theory = omega1.copy()
+        omega_theory = omega_theory[omega_theory <= omega_c]
+        k_theory = 2.0 * np.arcsin(
+            np.clip(0.5 * omega_theory * np.sqrt(L_per * C_per), 0.0, 1.0)
+        )
+
+        fig_disp = plt.figure(figsize=(10, 4))
+        plt.plot(f1[mask1], beta1[mask1], label="Measured beta (C1/C2)")
+        plt.plot(omega_theory / (2.0 * np.pi), k_theory, label="Theoretical beta", alpha=0.9)
+        plt.title("Dispersion Relation beta(f) (rad/section)")
         plt.xlabel("Frequency (Hz)")
-        plt.ylabel("Magnitude")
+        plt.ylabel("beta (rad/section)")
+        plt.legend()
         plt.tight_layout()
-        _save_fig(fig_h4, plot_dir / (base.name + "_eq_c4_mag.png"))
+        _save_fig(fig_disp, plot_dir / (base.name + "_dispersion.png"))
 
     plt.show()
 
